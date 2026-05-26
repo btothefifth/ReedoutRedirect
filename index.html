@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="robots" content="noindex">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reedout Home Redirect</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f5f7fb;
+        --muted: #aab3c5;
+        --line: #2b3244;
+        --panel: #111827;
+        --page: #080b13;
+        --purple: #241773;
+        --purple-bright: #5b45d9;
+        --red: #f87171;
+        --gold: #d4af37;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        color: var(--ink);
+        background: linear-gradient(135deg, #080b13 0%, #17113c 48%, #080b13 100%);
+        letter-spacing: 0;
+      }
+
+      main {
+        width: min(100% - 32px, 680px);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 24, 39, 0.96);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+        padding: 28px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+
+      .mark {
+        width: 48px;
+        height: 48px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--purple) 0%, var(--purple-bright) 100%);
+        color: #fff;
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.2;
+      }
+
+      p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      a {
+        color: #b7a8ff;
+        overflow-wrap: anywhere;
+      }
+
+      .status {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        border: 1px solid rgba(212, 175, 55, 0.42);
+        border-radius: 8px;
+        background: rgba(212, 175, 55, 0.12);
+        color: #f5d772;
+        padding: 10px 12px;
+        font-weight: 750;
+      }
+
+      .status.error {
+        border-color: rgba(248, 113, 113, 0.5);
+        background: rgba(248, 113, 113, 0.12);
+        color: var(--red);
+      }
+
+      .target {
+        margin-top: 16px;
+      }
+
+      pre {
+        display: none;
+        margin: 16px 0 0;
+        max-height: 360px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0d1424;
+        color: #d9deeb;
+        padding: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      pre.is-visible {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <div class="mark" aria-hidden="true">R</div>
+        <div>
+          <h1>Reedout Home Redirect</h1>
+          <p>Fetching the latest home address from GitHub Gist.</p>
+        </div>
+      </div>
+      <div id="status" class="status">Starting redirect check...</div>
+      <p class="target">
+        Target:
+        <a id="manualLink" href="#" rel="nofollow">Waiting for heartbeat data</a>
+      </p>
+      <pre id="debugOutput"></pre>
+    </main>
+
+    <script>
+      const GIST_ID = "5731170f0908ad84f7a5ae1d8ec7e486";
+      const FILE_NAME = "home.json";
+      const MAX_AGE_MINUTES = 60;
+      const REDIRECT_DELAY_MS = 250;
+
+      const params = new URLSearchParams(window.location.search);
+      const DEBUG = params.get("debug") === "1";
+      const GIST_ID_OVERRIDE = params.get("gist") || "";
+
+      const statusEl = document.getElementById("status");
+      const manualLink = document.getElementById("manualLink");
+      const debugOutput = document.getElementById("debugOutput");
+
+      function setStatus(message, tone) {
+        statusEl.textContent = message;
+        statusEl.classList.toggle("error", tone === "error");
+      }
+
+      function showDebug(value) {
+        debugOutput.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        debugOutput.classList.add("is-visible");
+      }
+
+      function getConfiguredGistId() {
+        if (GIST_ID_OVERRIDE) {
+          return GIST_ID_OVERRIDE;
+        }
+        if (!GIST_ID || GIST_ID === "PASTE_YOUR_GIST_ID_HERE") {
+          throw new Error("Set GIST_ID in github-pages/index.html, or pass ?gist=YOUR_GIST_ID for a quick test.");
+        }
+        return GIST_ID;
+      }
+
+      function ageMinutes(updated) {
+        if (!updated || updated === "never") {
+          return null;
+        }
+        const updatedMs = new Date(updated).getTime();
+        if (!Number.isFinite(updatedMs)) {
+          return null;
+        }
+        return (Date.now() - updatedMs) / 60000;
+      }
+
+      function validateHome(home) {
+        if (!home || typeof home !== "object") {
+          throw new Error("home.json did not contain a JSON object.");
+        }
+        if (!home.url || typeof home.url !== "string") {
+          throw new Error("home.json is missing a string url field.");
+        }
+        if (!home.url.startsWith("http://")) {
+          throw new Error(`Refusing to redirect because url does not start with http://: ${home.url}`);
+        }
+        return home;
+      }
+
+      async function loadHome() {
+        const gistId = getConfiguredGistId();
+        const apiUrl = `https://api.github.com/gists/${encodeURIComponent(gistId)}?t=${Date.now()}`;
+        const response = await fetch(apiUrl, {
+          headers: { "Accept": "application/vnd.github+json" },
+          cache: "no-store"
+        });
+        if (!response.ok) {
+          throw new Error(`GitHub API returned HTTP ${response.status}`);
+        }
+        const gist = await response.json();
+        const file = gist.files && gist.files[FILE_NAME];
+        if (!file || typeof file.content !== "string") {
+          throw new Error(`Gist file not found: ${FILE_NAME}`);
+        }
+        return validateHome(JSON.parse(file.content));
+      }
+
+      async function main() {
+        const home = await loadHome();
+        const age = ageMinutes(home.updated);
+        const debugInfo = {
+          target: home.url,
+          ip: home.ip,
+          port: home.port,
+          updated: home.updated,
+          ageMinutes: age === null ? null : Math.round(age * 10) / 10,
+          maxAgeMinutes: MAX_AGE_MINUTES,
+          debugMode: DEBUG
+        };
+
+        manualLink.href = home.url;
+        manualLink.textContent = home.url;
+
+        if (DEBUG) {
+          setStatus("Debug mode is on. Not redirecting.");
+          showDebug(debugInfo);
+          return;
+        }
+
+        if (age === null) {
+          setStatus("Heartbeat timestamp is missing or invalid. Not redirecting automatically.", "error");
+          showDebug(debugInfo);
+          return;
+        }
+
+        if (age > MAX_AGE_MINUTES) {
+          setStatus(`Heartbeat is stale. Last update was about ${Math.round(age)} minutes ago.`, "error");
+          showDebug(debugInfo);
+          return;
+        }
+
+        setStatus(`Redirecting to ${home.url}`);
+        setTimeout(() => window.location.replace(home.url), REDIRECT_DELAY_MS);
+      }
+
+      main().catch((error) => {
+        setStatus(`Redirect failed: ${error.message}`, "error");
+        showDebug(error && error.stack ? error.stack : String(error));
+      });
+    </script>
+  </body>
+</html>
