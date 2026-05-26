@@ -189,8 +189,9 @@
         if (!home.url || typeof home.url !== "string") {
           throw new Error("home.json is missing a string url field.");
         }
-        if (!home.url.startsWith("http://")) {
-          throw new Error(`Refusing to redirect because url does not start with http://: ${home.url}`);
+        const target = new URL(home.url);
+        if (!["http:", "https:"].includes(target.protocol)) {
+          throw new Error(`Refusing to redirect because url does not start with http:// or https://: ${home.url}`);
         }
         return home;
       }
